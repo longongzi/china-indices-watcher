@@ -45,17 +45,12 @@ print(f"GET login: {r.status_code}, CSRF: {csrf[:20] if csrf else 'NONE'}", flus
 r = s.post('https://pypi.org/account/login/', 
     data={'csrf_token': csrf, 'username': USER, 'password': PASS},
     headers=bh(referer='https://pypi.org/account/login/'), timeout=30)
-print(f"POST login: {r.status_code}, URL: {r.url}, Title: {re.search(r'<title>([^<]*)', r.text).group(1) if re.search(r'<title>([^<]*)', r.text) else '?'}", flush=True)
+print(f"POST login: {r.status_code}, URL: {r.url}", flush=True)
 
-# 2. Go to token page (will redirect to TOTP if needed)
-print("\n=== Token page ===", flush=True)
-r = s.get('https://pypi.org/manage/account/token/', timeout=30, headers=bh(referer='https://pypi.org/'))
-print(f"GET token: {r.status_code}, URL: {r.url}", flush=True)
-
-# 3. Handle TOTP redirect
+# CRITICAL: Complete TOTP IMMEDIATELY after login, before doing anything else
 totp_retries = 3
-for attempt in range(totp_retries):
-    if 'two-factor' in r.url:
+if 'two-factor' in r.url:
+    for attempt in range(totp_retries):
         print(f"\n=== TOTP (attempt {attempt+1}) ===", flush=True)
         csrf = extract_csrf(r.text)
         code = pyotp.TOTP(SECRET).now()
@@ -64,15 +59,16 @@ for attempt in range(totp_retries):
         r = s.post(r.url, data={'csrf_token': csrf or '', 'code': code, 'method': 'totp'},
             headers=bh(referer=r.url, origin='https://pypi.org'), 
             allow_redirects=False, timeout=30)
+        print(f"TOTP POST: {r.status_code}, Location: {r.headers.get('location','none')}", flush=True)
         
         if r.status_code in (302, 303):
             loc = r.headers['location']
             loc_url = loc if loc.startswith('http') else 'https://pypi.org' + loc
-            print(f"TOTP redirect: {loc_url}", flush=True)
+            print(f"TOTP redirect to: {loc_url}", flush=True)
             r = s.get(loc_url, headers=bh(referer=r.url), timeout=30)
             print(f"After TOTP: {r.status_code}, URL: {r.url}", flush=True)
             
-            # Check for password confirmation
+            # Handle password confirmation (PyPI may ask for password again after 2FA)
             if 'password' in r.url.lower() and 'confirm' in r.url.lower():
                 print("\n=== Password confirmation ===", flush=True)
                 csrf = extract_csrf(r.text)
@@ -86,11 +82,23 @@ for attempt in range(totp_retries):
                     print(f"After password: {r.status_code}, URL: {r.url}", flush=True)
             break
         else:
-            print(f"TOTP failed: {r.status_code}, body: {r.text[:500]}", flush=True)
+            print(f"TOTP failed: {r.status_code}, body: {r.text[:800]}", flush=True)
             if attempt < totp_retries - 1:
                 time.sleep(1)
     else:
-        break
+        print("TOTP failed after all retries", flush=True)
+        sys.exit(1)
+
+# 2. Now go to token page (session should be fully authenticated)
+print("\n=== Token page ===", flush=True)
+r = s.get('https://pypi.org/manage/account/token/', timeout=30, headers=bh(referer='https://pypi.org/'))
+print(f"GET token: {r.status_code}, URL: {r.url}", flush=True)
+
+# If redirected back to login, something went wrong with TOTP
+if 'login' in r.url.lower():
+    print(f"ERROR: Redirected to login after TOTP. Session not authenticated.", flush=True)
+    print(f"HTML: {r.text[:1000]}", flush=True)
+    sys.exit(1)
 
 # 4. Create token
 print(f"\n=== Create token '{TOKEN_NAME}' ===", flush=True)
