@@ -1,0 +1,167 @@
+name: Create PyPI Token
+on:
+  workflow_dispatch:
+
+jobs:
+  create-token:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      
+      - name: Install dependencies
+        run: pip install requests pyotp
+      
+      - name: Create PyPI API Token
+        env:
+          PYPI_USER: "lonongzi"
+          PYPI_PASS: "iioopp.123"
+          PYPI_TOTP_SECRET: "ZZ4OL5CUEPF2W4QCRGJNA5DIKLRMLKTX"
+        run: |
+          python -c "
+import requests, re, os, json
+import pyotp
+
+user = os.environ['PYPI_USER']
+passwd = os.environ['PYPI_PASS']
+secret = os.environ['PYPI_TOTP_SECRET']
+token_name = 'gh-actions-token'
+
+s = requests.Session()
+
+# Step 1: Login page
+r = s.get('https://pypi.org/account/login/', timeout=30)
+csrf = re.search(r'name=\"csrf_token\".*?value=\"([^\"]+)\"', r.text, re.DOTALL)
+csrf = csrf.group(1) if csrf else ''
+
+# Step 2: POST login
+r = s.post('https://pypi.org/account/login/', 
+    data={'csrf_token': csrf, 'username': user, 'password': passwd},
+    headers={'Referer': 'https://pypi.org/account/login/'},
+    timeout=30, allow_redirects=False)
+
+# Follow redirect
+loc = r.headers.get('location','')
+r = s.get(loc if 'http' in loc else 'https://pypi.org'+loc, timeout=30)
+print(f'After login: {r.status_code} {r.url}')
+
+# Step 3: TOTP
+if 'two-factor' in r.url:
+    totp = pyotp.TOTP(secret)
+    code = totp.now()
+    csrf = re.search(r'name=\"csrf_token\".*?value=\"([^\"]+)\"', r.text, re.DOTALL)
+    csrf = csrf.group(1) if csrf else ''
+    
+    # Try with offset -1, 0, +1
+    success = False
+    for offset in [-1, 0, 1]:
+        code = pyotp.TOTP(secret).at(int(__import__('time').time()) // 30 + offset)
+        r2 = s.post(r.url, 
+            data={'csrf_token': csrf, 'totp_value': code, 'method': 'totp'},
+            headers={'Referer': r.url},
+            timeout=30, allow_redirects=False)
+        if r2.status_code in (302, 303):
+            success = True
+            loc = r2.headers.get('location','')
+            r = s.get(loc if 'http' in loc else 'https://pypi.org'+loc, timeout=30)
+            print(f'After TOTP: {r.status_code} {r.url}')
+            break
+        print(f'  TOTP offset={offset}: {code} -> {r2.status_code}')
+    
+    if not success:
+        print('❌ TOTP failed all offsets')
+        exit(1)
+
+# Step 4: Go to token page
+r = s.get('https://pypi.org/manage/account/token/', timeout=30)
+print(f'Token page: {r.status_code} ({len(r.text)} chars)')
+
+# Step 5: Password confirm (if needed)
+if 'confirm_password_input' in r.text:
+    csrf = re.search(r'name=\"csrf_token\".*?value=\"([^\"]+)\"', r.text, re.DOTALL)
+    csrf = csrf.group(1) if csrf else ''
+    r2 = s.post('https://pypi.org/manage/account/token/',
+        data={'csrf_token': csrf, 'confirm_password_input': passwd},
+        headers={'Referer': 'https://pypi.org/manage/account/token/'},
+        timeout=30, allow_redirects=False)
+    loc = r2.headers.get('location','')
+    r = s.get(loc if 'http' in loc else 'https://pypi.org'+loc, timeout=30)
+
+# Step 6: Create token
+csrf = re.search(r'name=\"csrf_token\".*?value=\"([^\"]+)\"', r.text, re.DOTALL)
+csrf = csrf.group(1) if csrf else ''
+
+r = s.post('https://pypi.org/manage/account/token/',
+    data={'csrf_token': csrf, 'name': token_name},
+    headers={
+        'Referer': 'https://pypi.org/manage/account/token/',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Origin': 'https://pypi.org'
+    },
+    timeout=30, allow_redirects=False)
+print(f'Create POST: {r.status_code}')
+
+# Check if we got the token in the response
+token = None
+if r.status_code in (302, 303):
+    # Follow redirect
+    loc = r.headers.get('location','')
+    loc_url = loc if 'http' in loc else 'https://pypi.org' + loc
+    r2 = s.get(loc_url, timeout=30)
+    
+    # Search for token pattern in page
+    for p in [r'pypi-[\\w-]{30,}', r'pypi-[\\w.]{30,}']:
+        m = re.search(p, r2.text)
+        if m:
+            token = m.group(0)
+            break
+    
+    # Check alert boxes
+    alerts = re.findall(r'class=\"[^\"]*alert-success[^\"]*\"[^>]*>(.*?)</', r2.text)
+    for a in alerts:
+        m = re.search(r'pypi-[\\w-]{30,}', a)
+        if m:
+            token = m.group(0)
+            break
+elif r.status_code == 200:
+    # Token might be in the response body
+    for p in [r'pypi-[\\w-]{30,}', r'\"token\":\\s*\"(pypi-[\\w-]+)\"']:
+        m = re.search(p, r.text)
+        if m:
+            token = m.group(0)
+            break
+
+if token:
+    print(f'\\n✅✅ TOKEN: {token}')
+    # Save to artifact
+    with open('pypi_token.txt', 'w') as f:
+        f.write(token)
+    print('Saved to pypi_token.txt')
+else:
+    print('❌ Token not found in response')
+    print(f'Last URL: {r.url}')
+    # Save response for debugging
+    body = r.text if r.status_code == 200 else r2.text if 'r2' in dir() else ''
+    with open('token_debug.html', 'w', encoding='utf-8') as f:
+        f.write(body[:10000])
+    print('Saved token_debug.html')
+" 
+      
+      - name: Upload token artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pypi-token
+          path: pypi_token.txt
+      
+      - name: Show token status
+        run: |
+          if [ -f pypi_token.txt ]; then
+            echo "Token file size: $(wc -c < pypi_token.txt) bytes"
+            echo "Token: $(cat pypi_token.txt)"
+          else
+            echo "No token file generated"
+          fi
