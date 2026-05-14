@@ -53,9 +53,11 @@ with sync_playwright() as pw:
             log("FATAL: All TOTP offsets failed")
             sys.exit(1)
 
-    # --- Step 3: Navigate to token management page ---
-    log("Navigating to token management page...")
-    page.goto("https://pypi.org/manage/account/token/", wait_until="networkidle", timeout=60000)
+    # --- Step 3: Navigate to token management page via JS ---
+    # IMPORTANT: Use window.location.href instead of page.goto() to preserve session cookies
+    log("Navigating to token management page via JS...")
+    page.evaluate("""window.location.href = 'https://pypi.org/manage/account/token/'""")
+    page.wait_for_load_state("networkidle", timeout=60000)
     log(f"Token page: {page.url} ({len(page.content())} chars)")
 
     # --- Step 4: Handle password confirmation if needed ---
@@ -66,14 +68,15 @@ with sync_playwright() as pw:
         page.click('button[type="submit"]')
         page.wait_for_load_state("networkidle", timeout=60000)
         log(f"After password confirmation: {page.url}")
+        # Re-navigate to token page via JS
+        page.evaluate("""window.location.href = 'https://pypi.org/manage/account/token/'""")
+        page.wait_for_load_state("networkidle", timeout=60000)
+        log(f"Token page after confirm: {page.url}")
 
     # --- Step 5: Create the token ---
     log("Creating API token...")
 
-    # Check if there's a "Create token" button/action
-    # PyPI uses a form POST to create tokens
-    page.goto("https://pypi.org/manage/account/token/", wait_until="networkidle", timeout=60000)
-
+    page_content = page.content()
     # Try to find and use the create token form
     has_form = page.evaluate("""() => {
         var inputs = document.querySelectorAll('input[name="name"]');
@@ -89,10 +92,10 @@ with sync_playwright() as pw:
             var btn = document.querySelector('button[type="submit"]');
             if (btn) btn.click();
         }""")
-        page.wait_for_load_state("networkidle", timeout=60000, wait_until="networkidle")
+        page.wait_for_load_state("networkidle", timeout=60000)
         log(f"After token creation: {page.url}")
     else:
-        log("No form detected, trying via page content inspection...")
+        log("No form detected on token page")
 
     # --- Step 6: Extract the token ---
     log("Extracting token from page...")
