@@ -1,4 +1,5 @@
 name: Create PyPI Token
+
 on:
   push:
     branches: [create-token]
@@ -15,9 +16,12 @@ jobs:
           python-version: "3.12"
 
       - name: Install deps
-        run: pip install requests pyotp
+        run: pip install requests pyotp playwright
 
-      - name: Create PyPI API Token via HTTP
+      - name: Install Playwright browsers
+        run: playwright install chromium
+
+      - name: Create PyPI API Token via Playwright
         env:
           PYPI_USER: "lonongzi"
           PYPI_PASS: "iioopp.123"
