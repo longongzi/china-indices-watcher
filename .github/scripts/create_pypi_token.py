@@ -1,11 +1,10 @@
-"""Create PyPI API token using Playwright (real browser) + TOTP."""
+"""Create PyPI API token using Playwright (real browser).
+Uses password-only login (no TOTP needed from GitHub runner IP)."""
 import os, sys, re, time
-import pyotp
 from playwright.sync_api import sync_playwright
 
 USER = os.environ["PYPI_USER"]
 PASS = os.environ["PYPI_PASS"]
-SECRET = os.environ.get("PYPI_TOTP_SECRET", "")
 TOKEN_NAME = "gh-actions-publisher"
 
 def log(msg):
@@ -13,136 +12,175 @@ def log(msg):
 
 log("=== Starting Playwright PyPI Token Creator ===")
 
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True, args=[
+with sync_playwright() as pw:
+    browser = pw.chromium.launch(headless=True, args=[
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
     ])
     context = browser.new_context(
-        user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
+        user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
+        locale='en-US',
     )
-    page = context.new_page()
     
-    # === Step 1: Go to login page ===
+    # === Step 1: Login ===
     log("Step 1: Navigating to login page...")
+    page = context.new_page()
     page.goto('https://pypi.org/account/login/', wait_until='networkidle', timeout=60000)
-    page.screenshot(path='/tmp/pypi_step1_login.png')
+    page.screenshot(path='/tmp/pypi_01_login_page.png')
     log(f"  URL: {page.url}")
     
-    # === Step 2: Fill login form ===
     log("Step 2: Filling login form...")
     page.fill('input[name="username"]', USER)
     page.fill('input[name="password"]', PASS)
-    page.click('button[type="submit"]')
-    page.wait_for_load_state('networkidle', timeout=60000)
-    page.screenshot(path='/tmp/pypi_step2_after_login.png')
+    
+    # Click submit and wait for navigation
+    with page.expect_navigation(wait_until='networkidle', timeout=60000):
+        page.click('button[type="submit"]')
+    
+    page.screenshot(path='/tmp/pypi_02_after_login.png')
     log(f"  URL: {page.url}")
     
-    # === Step 3: Handle TOTP if needed ===
-    if 'two-factor' in page.url.lower() or 'totp' in page.url.lower():
-        log("Step 3: TOTP page detected, trying codes...")
-        totp = pyotp.TOTP(SECRET)
-        now = int(time.time())
-        
-        # Collect unique codes across wide time range
-        codes_tried = set()
-        for offset in range(-4, 5):
-            codes_tried.add(totp.at(now + offset * 30))
-        
-        log(f"  Generated {len(codes_tried)} codes across ±4 windows")
-        
-        # Look for TOTP input
-        totp_input = page.query_selector('input[name="totp_value"]')
-        if not totp_input:
-            log("  ❌ Could not find TOTP input field!")
-            page.screenshot(path='/tmp/pypi_step3_totp_page.png')
-            log(f"  Page HTML (first 2000 chars):\n{page.content()[:2000]}")
+    # Check if we hit TOTP page
+    if 'two-factor' in page.url.lower():
+        log("  ⚠️ TOTP page appeared! Trying codes...")
+        import pyotp
+        secret = os.environ.get("PYPI_TOTP_SECRET", "")
+        if not secret:
+            log("  ❌ No TOTP secret configured!")
             browser.close()
             sys.exit(1)
+        totp = pyotp.TOTP(secret)
+        now = int(time.time())
+        codes = set()
+        for offset in range(-4, 5):
+            codes.add(totp.at(now + offset * 30))
         
         success = False
-        for code in sorted(codes_tried):
+        for code in sorted(codes):
             log(f"  Trying code={code}...", end='')
-            totp_input.fill(str(code))
-            page.click('button[type="submit"]')
-            page.wait_for_load_state('networkidle', timeout=30000)
-            
-            if 'two-factor' not in page.url.lower() and 'login' not in page.url.lower():
-                log(f" ✅ SUCCESS! Redirected to: {page.url[:80]}")
-                success = True
-                page.screenshot(path='/tmp/pypi_step3_totp_success.png')
-                break
-            elif 'Too Many Failed' in page.content() or 'too many' in page.content().lower():
-                log(f" ❌ RATE LIMITED!")
-                page.screenshot(path='/tmp/pypi_step3_ratelimited.png')
-                # Re-navigate to login
-                page.goto('https://pypi.org/account/login/', wait_until='networkidle', timeout=60000)
-                page.fill('input[name="username"]', USER)
-                page.fill('input[name="password"]', PASS)
+            page.fill('input[name="totp_value"]', str(code))
+            with page.expect_navigation(wait_until='networkidle', timeout=30000):
                 page.click('button[type="submit"]')
-                page.wait_for_load_state('networkidle', timeout=60000)
-                if 'two-factor' in page.url.lower():
-                    totp_input = page.query_selector('input[name="totp_value"]')
-                else:
-                    log("  After re-login, no TOTP page - checking status")
-                    log(f"  URL: {page.url}")
-                    break
-            else:
-                log(f" ❌ Rejected (URL: {page.url[:70]})")
+            if 'two-factor' not in page.url.lower() and 'login' not in page.url.lower():
+                log(" ✅")
+                success = True
+                page.screenshot(path='/tmp/pypi_02_totp_success.png')
+                break
+            log(" ❌")
+            page.screenshot(path='/tmp/pypi_02_totp_fail.png')
         
         if not success:
-            log("❌ All TOTP codes failed!")
-            page.screenshot(path='/tmp/pypi_step3_all_failed.png')
+            log("  ❌ All TOTP codes failed!")
             browser.close()
             sys.exit(1)
-    else:
-        log(f"Step 3: No TOTP required (URL: {page.url[:80]})")
-        page.screenshot(path='/tmp/pypi_step3_no_totp.png')
     
-    # === Step 4: Navigate to token page ===
-    log("Step 4: Navigating to token management...")
+    # === Step 2: Verify session is active ===
+    log(f"Step 3: Verifying session (URL: {page.url})...")
+    page_content = page.content()
+    page.screenshot(path='/tmp/pypi_03_session_check.png')
+    
+    # Check if we see any logged-in indicators
+    is_logged_in = False
+    if 'Log out' in page_content or 'logout' in page_content.lower():
+        is_logged_in = True
+        log("  ✅ Session active (found 'Log out' link)")
+    elif 'login' in page.url.lower() and 'next' in page.url:
+        log("  ❌ Redirected to login - session not established")
+        # Save full HTML for debugging
+        with open('/tmp/pypi_login_page_debug.html', 'w') as f:
+            f.write(page_content[:10000])
+        browser.close()
+        sys.exit(1)
+    
+    if not is_logged_in:
+        log("  ⚠️ Could not confirm login status, proceeding anyway...")
+    
+    # === Step 3: Navigate to token page ===
+    log("Step 4: Going to token management page...")
+    # Use goto - should maintain cookies from the same context
     page.goto('https://pypi.org/manage/account/token/', wait_until='networkidle', timeout=60000)
+    page.screenshot(path='/tmp/pypi_04_token_page.png')
     log(f"  URL: {page.url}")
-    page.screenshot(path='/tmp/pypi_step4_token_page.png')
     
     if 'login' in page.url.lower():
-        log("❌ SESSION NOT AUTHENTICATED!")
+        log("  ❌ Session not authenticated for token page!")
+        
+        # Maybe the original page had the session but cookies didn't carry
+        # Try going through account link
+        log("  Trying alternative: use context cookies to re-authenticate...")
+        
+        # Go back to home and check if we're logged in there
+        page.goto('https://pypi.org/', wait_until='networkidle', timeout=30000)
+        log(f"  Home URL: {page.url}")
+        content = page.content()
+        if 'Log out' in content or 'logout' in content.lower():
+            log("  ✅ Session present on homepage! Clicking account link...")
+            # Click the account/user menu to find token link
+            account_link = page.query_selector('a[href*="account"]')
+            if account_link:
+                account_link.click()
+                page.wait_for_load_state('networkidle', timeout=30000)
+                log(f"  Account URL: {page.url}")
+                page.screenshot(path='/tmp/pypi_04_account_page.png')
+                
+                # Find token management link
+                token_link = page.query_selector('a[href*="token"]')
+                if token_link:
+                    token_link.click()
+                    page.wait_for_load_state('networkidle', timeout=30000)
+                    log(f"  Token URL: {page.url}")
+                    page.screenshot(path='/tmp/pypi_04_token_via_link.png')
+        else:
+            log("  ❌ Session also lost on homepage!")
+            with open('/tmp/pypi_homepage_debug.html', 'w') as f:
+                f.write(content[:5000])
+            browser.close()
+            sys.exit(1)
+    
+    if 'login' in page.url.lower():
+        log("  ❌ Still not authenticated!")
         browser.close()
         sys.exit(1)
     
-    # === Step 5: Create token ===
-    log("Step 5: Creating token...")
+    log("  ✅ Token page loaded successfully!")
     
-    # Handle optional password confirmation
+    # === Step 4: Handle password confirmation if needed ===
     confirm_input = page.query_selector('input[name="confirm_password_input"]')
     if confirm_input:
-        log("  Password confirmation required...")
+        log("Step 5: Password confirmation required...")
         confirm_input.fill(PASS)
-        page.click('button[type="submit"]')
-        page.wait_for_load_state('networkidle', timeout=30000)
-        page.screenshot(path='/tmp/pypi_step5_confirmed.png')
-        log(f"  After confirm: {page.url}")
+        with page.expect_navigation(wait_until='networkidle', timeout=30000):
+            page.click('button[type="submit"]')
+        page.screenshot(path='/tmp/pypi_05_confirmed.png')
+        log(f"  URL: {page.url}")
+        if 'login' in page.url.lower():
+            log("  ❌ Auth lost during password confirmation!")
+            browser.close()
+            sys.exit(1)
     
-    # Fill token name and submit
+    # === Step 5: Create token ===
+    log("Step 6: Creating token...")
     name_input = page.query_selector('input[name="name"]')
-    if name_input:
-        name_input.fill(TOKEN_NAME)
-        page.click('button[type="submit"]')
-        page.wait_for_load_state('networkidle', timeout=30000)
-        page.screenshot(path='/tmp/pypi_step6_token_created.png')
-        log(f"  After submit: {page.url}")
-    else:
+    if not name_input:
         log("  ❌ Could not find token name input!")
-        log(f"  Page HTML (first 2000):\n{page.content()[:2000]}")
+        log(f"  HTML snippet: {page.content()[:2000]}")
+        page.screenshot(path='/tmp/pypi_06_no_input.png')
         browser.close()
         sys.exit(1)
     
+    name_input.fill(TOKEN_NAME)
+    with page.expect_navigation(wait_until='networkidle', timeout=30000):
+        page.click('button[type="submit"]')
+    
+    page.screenshot(path='/tmp/pypi_06_token_submitted.png')
+    log(f"  URL: {page.url}")
+    
     # === Step 6: Extract token ===
-    log("Step 6: Extracting token from page...")
+    log("Step 7: Extracting token...")
     content = page.content()
     
-    # Look for token pattern: pypi-xxxx...
+    # Look for pypi-xxx token pattern
     token_match = re.search(r'pypi-[\w-]{30,}', content)
     if token_match:
         token = token_match.group(0)
@@ -155,9 +193,8 @@ with sync_playwright() as p:
             with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
                 f.write(f"token={token}\n")
     else:
-        log("❌ Token not found in page!")
-        # Try to find it in success alerts
-        alerts = re.findall(r'class="[^"]*alert-success[^"]*"[^>]*>(.*?)</', content)
+        # Try alert boxes
+        alerts = re.findall(r'class="[^"]*alert-success[^"]*"[^>]*>(.*?)</', content, re.DOTALL)
         for alert in alerts:
             m = re.search(r'pypi-[\w-]{30,}', alert)
             if m:
@@ -167,8 +204,8 @@ with sync_playwright() as p:
                     f.write(token)
                 break
         else:
-            log(f"  Last URL: {page.url}")
-            page.screenshot(path='/tmp/pypi_step6_no_token.png')
+            log("❌ Token not found!")
+            log(f"  Page content (first 3000):\n{content[:3000]}")
     
     browser.close()
     log("\n=== Done ===")
