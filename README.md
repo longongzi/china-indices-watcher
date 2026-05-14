@@ -1,8 +1,7 @@
-
 # 📈 China Indices Watcher (cniw)
 
-[![PyPI](https://img.shields.io/pypi/v/china-indices-watcher)](https://pypi.org/project/china-indices-watcher/)
-[![Python Version](https://img.shields.io/pypi/pyversions/china-indices-watcher)](https://pypi.org/project/china-indices-watcher/)
+[![Release](https://img.shields.io/github/v/release/longongzi/china-indices-watcher)](https://github.com/longongzi/china-indices-watcher/releases/latest)
+[![Python Version](https://img.shields.io/badge/python-%3E%3D3.9-blue)](https://python.org)
 [![License](https://img.shields.io/github/license/longongzi/china-indices-watcher)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/longongzi/china-indices-watcher?style=social)](https://github.com/longongzi/china-indices-watcher)
 
@@ -26,104 +25,71 @@ A command-line tool for monitoring China A-share market indices using free publi
 
 ## Installation / 安装
 
+### pip install from GitHub (recommended)
+
 ```bash
-pip install china-indices-watcher
+pip install https://github.com/longongzi/china-indices-watcher/releases/latest/download/china_indices_watcher-0.1.0-py3-none-any.whl
 ```
 
-Or install from source:
+### Install from source
 
 ```bash
 git clone https://github.com/longongzi/china-indices-watcher.git
 cd china-indices-watcher
-pip install -e .
+pip install .
 ```
 
-## Usage / 使用
-
-### Watch Indices / 查看指数
-
-One-shot display of all major indices:
+## Quick Start / 快速开始
 
 ```bash
+# Watch major indices live
 cniw watch
+
+# Show top gainers
+cniw gainers
+
+# Show 龙虎榜 (dragon-tiger billboard)
+cniw lhb
+
+# Set a price alert (trigger when SSE Composite crosses 3200)
+cniw alert --index sh000001 --threshold 3200
 ```
 
-Live refresh every 5 seconds:
+### Batch mode (auto-refresh)
 
 ```bash
-cniw watch --interval 5
+# Refresh every 10 seconds
+cniw watch --interval 10
 ```
 
-```
-╭──────────────────── A-Share Major Indices / A股主要指数 ────────────────────╮
-│ 指数        │ 最新价    │ 涨跌幅    │ 涨跌额    │ ↑上涨 │ ↓下跌 │ 涨跌比 │
-├─────────────┼───────────┼───────────┼───────────┼───────┼───────┼────────┤
-│ 上证指数    │ 3154.55   │ ↑ +1.01% │ +31.63   │ 1523  │ 677   │ 2.25   │
-│ 深证成指    │ 9712.53   │ ↑ +1.10% │ +105.70  │ 1936  │ 796   │ 2.43   │
-│ 创业板指    │ 1878.48   │ ↑ +1.12% │ +20.77   │ 753   │ 424   │ 1.78   │
-│ 上证50      │ 2487.89   │ ↑ +0.82% │ +20.18   │ 28    │ 17    │ 1.65   │
-│ 科创50      │ 768.51    │ ↑ +1.88% │ +14.17   │ 344   │ 225   │ 1.53   │
-╰────────────────────────────────────────────────────────────────────────────╯
-```
+## Usage / 使用说明
 
-### Top Gainers / 涨幅榜
+```
+Usage: cniw [OPTIONS] COMMAND [ARGS]...
 
-```bash
-cniw gainers --count 20
+  📈 China Indices Watcher (cniw) - A-Share Market CLI Tool
+
+Commands:
+  watch     Watch major A-share indices live
+  gainers   Show top gainers in the A-share market
+  lhb       Show 龙虎榜 (dragon-tiger billboard) data
+  alert     Alert when an index crosses a price threshold
 ```
 
-### LongHuBang / 龙虎榜
+### Color Convention / 颜色说明
 
-```bash
-cniw lhb --count 10
-```
+Chinese market convention (inverted from Western):
+- 📈 **Red** = price **up** (上涨)
+- 📉 **Green** = price **down** (下跌)
 
-### Price Alert / 价格提醒
+## Data Source / 数据来源
 
-Alert when 上证指数 crosses 3200:
+All data is fetched from **East Money (东方财富)** public APIs. No authentication or API key required.
 
-```bash
-cniw alert 3200
-```
+## Contributing / 贡献
 
-Alert on a specific index:
-
-```bash
-cniw alert 2500 --index 上证50 --interval 15
-```
-
-## Commands Overview / 命令概览
-
-| Command / 命令 | Description / 说明 |
-|---------------|-------------------|
-| `cniw watch` | Watch major indices (实时指数) |
-| `cniw gainers` | Top gainers list (涨幅榜) |
-| `cniw lhb` | 龙虎榜 data |
-| `cniw alert <price>` | Price alert (价格提醒) |
-
-## API Sources / 数据来源
-
-- **Primary**: [East Money (东方财富)](https://www.eastmoney.com/) free APIs
-- **Fallback**: Tencent Finance (腾讯财经) `qt.gtimg.cn` API
-
-No API key or registration required. Data is for reference only.
-
-## Development / 开发
-
-```bash
-# Install dev dependencies
-pip install -e .
-
-# Run tests
-python -m pytest
-```
+Contributions are welcome! Feel free to open issues or submit pull requests.
 
 ## License / 许可证
 
-[MIT](LICENSE) © 2026 longongzi
-
----
-
-<div align="center">
-  <sub>Built with ❤️ for the Chinese investment community | 为中国投资者社区倾心打造</sub>
-</div>
+MIT
