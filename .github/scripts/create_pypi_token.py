@@ -56,7 +56,7 @@ if 'two-factor' in r.url:
         code = pyotp.TOTP(SECRET).now()
         print(f"Code: {code}, CSRF: {csrf[:20] if csrf else 'NONE'}", flush=True)
         
-        r = s.post(r.url, data={'csrf_token': csrf or '', 'code': code, 'method': 'totp'},
+        r = s.post(r.url, data={'csrf_token': csrf or '', 'totp_value': code},
             headers=bh(referer=r.url, origin='https://pypi.org'), 
             allow_redirects=False, timeout=30)
         print(f"TOTP POST: {r.status_code}, Location: {r.headers.get('location','none')}", flush=True)
