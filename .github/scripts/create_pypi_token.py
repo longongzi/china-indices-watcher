@@ -57,12 +57,14 @@ with sync_playwright() as pw:
     # IMPORTANT: Use window.location.href instead of page.goto() to preserve session cookies
     log("Navigating to token management page via JS...")
     page.evaluate("""window.location.href = 'https://pypi.org/manage/account/token/'""")
-    page.wait_for_load_state("networkidle", timeout=60000)
-    log(f"Token page: {page.url} ({len(page.content())} chars)")
+    # Wait for the navigation to complete before accessing content
+    page.wait_for_url("**/manage/account/token/**", timeout=60000)
+    page.wait_for_load_state("networkidle", timeout=30000)
+    log(f"Token page: {page.url}")
 
     # --- Step 4: Handle password confirmation if needed ---
-    page_content = page.content()
-    if "confirm_password" in page_content.lower():
+    page_text = page.evaluate("() => document.body.innerText")
+    if "confirm_password" in page_text.lower():
         log("Password confirmation required...")
         page.fill('input[name="confirm_password_input"]', PASS)
         page.click('button[type="submit"]')
@@ -70,13 +72,14 @@ with sync_playwright() as pw:
         log(f"After password confirmation: {page.url}")
         # Re-navigate to token page via JS
         page.evaluate("""window.location.href = 'https://pypi.org/manage/account/token/'""")
-        page.wait_for_load_state("networkidle", timeout=60000)
+        page.wait_for_url("**/manage/account/token/**", timeout=60000)
+        page.wait_for_load_state("networkidle", timeout=30000)
         log(f"Token page after confirm: {page.url}")
 
     # --- Step 5: Create the token ---
     log("Creating API token...")
 
-    page_content = page.content()
+    page_text = page.evaluate("() => document.body.innerText")
     # Try to find and use the create token form
     has_form = page.evaluate("""() => {
         var inputs = document.querySelectorAll('input[name="name"]');
@@ -99,7 +102,7 @@ with sync_playwright() as pw:
 
     # --- Step 6: Extract the token ---
     log("Extracting token from page...")
-    current_text = page.content()
+    current_text = page.evaluate("() => document.body.innerText")
     token = None
 
     # Pattern: pypi-xxxx...xxxx (long string)
@@ -117,8 +120,9 @@ with sync_playwright() as pw:
         if token:
             break
 
-    # Also check the page text more carefully
-    body_text = page.evaluate("() => document.body.innerText")
+    # Also check the page text more carefully (re-read in case page updated)
+    if not token or len(token) < 40:
+        body_text = page.evaluate("() => document.body.innerText")
     for pattern in [
         r'pypi-[A-Za-z0-9_-]{30,}',
         r'pypi-[A-Za-z0-9._-]+'
