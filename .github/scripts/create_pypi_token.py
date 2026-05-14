@@ -34,39 +34,54 @@ def extract_csrf(html):
         if m: return m.group(1)
     return None
 
-s = requests.Session()
+def do_login(s):
+    """Login and return (session, TOTP page URL). Handles rate limits."""
+    print("=== Login ===", flush=True)
+    r = s.get('https://pypi.org/account/login/', timeout=30, headers=bh())
+    csrf = extract_csrf(r.text)
+    print(f"GET login: {r.status_code}, CSRF: {csrf[:20] if csrf else 'NONE'}", flush=True)
 
-# 1. Login
-print("=== Login ===", flush=True)
-r = s.get('https://pypi.org/account/login/', timeout=30, headers=bh())
-csrf = extract_csrf(r.text)
-print(f"GET login: {r.status_code}, CSRF: {csrf[:20] if csrf else 'NONE'}", flush=True)
+    r = s.post('https://pypi.org/account/login/', 
+        data={'csrf_token': csrf, 'username': USER, 'password': PASS},
+        headers=bh(referer='https://pypi.org/account/login/'), timeout=30)
+    print(f"POST login: {r.status_code}, URL: {r.url[:80]}", flush=True)
+    
+    # Handle rate limit
+    if r.status_code == 429:
+        print("Rate limited! Waiting 90 seconds...", flush=True)
+        time.sleep(90)
+        return do_login(s)
+    
+    if 'two-factor' not in r.url:
+        print(f"ERROR: Expected two-factor page, got: {r.url}", flush=True)
+        print(f"Body: {r.text[:500]}", flush=True)
+        return False
+    
+    return r  # Success - TOTP page
 
-r = s.post('https://pypi.org/account/login/', 
-    data={'csrf_token': csrf, 'username': USER, 'password': PASS},
-    headers=bh(referer='https://pypi.org/account/login/'), timeout=30)
-print(f"POST login: {r.status_code}, URL: {r.url}", flush=True)
-
-# CRITICAL: Complete TOTP IMMEDIATELY after login, before doing anything else
-totp_retries = 3
-if 'two-factor' in r.url:
-    for attempt in range(totp_retries):
+def do_totp(s, totp_page_resp):
+    """Submit TOTP code. Returns (success_bool, response_after_totp_or_None)."""
+    for attempt in range(3):
         print(f"\n=== TOTP (attempt {attempt+1}) ===", flush=True)
-        csrf = extract_csrf(r.text)
+        csrf = extract_csrf(totp_page_resp.text)
+        if not csrf:
+            print(f"No CSRF found! Page title: {re.search(r'<title>([^<]+)', totp_page_resp.text)}", flush=True)
+            return False, None
         code = pyotp.TOTP(SECRET).now()
-        print(f"Code: {code}, CSRF: {csrf[:20] if csrf else 'NONE'}", flush=True)
+        print(f"Code: {code}, CSRF: {csrf[:20]}", flush=True)
         
-        r = s.post(r.url, data={'csrf_token': csrf or '', 'totp_value': code, 'method': 'totp'},
-            headers=bh(referer=r.url, origin='https://pypi.org'), 
+        r = s.post(totp_page_resp.url, 
+            data={'csrf_token': csrf, 'totp_value': code, 'method': 'totp'},
+            headers=bh(referer=totp_page_resp.url, origin='https://pypi.org'), 
             allow_redirects=False, timeout=30)
         print(f"TOTP POST: {r.status_code}, Location: {r.headers.get('location','none')}", flush=True)
         
         if r.status_code in (302, 303):
             loc = r.headers['location']
             loc_url = loc if loc.startswith('http') else 'https://pypi.org' + loc
-            print(f"TOTP redirect to: {loc_url}", flush=True)
-            r = s.get(loc_url, headers=bh(referer=r.url), timeout=30)
-            print(f"After TOTP: {r.status_code}, URL: {r.url}", flush=True)
+            print(f"Redirect to: {loc_url[:80]}", flush=True)
+            r = s.get(loc_url, headers=bh(referer=totp_page_resp.url), timeout=30)
+            print(f"After TOTP: {r.status_code}, URL: {r.url[:80]}", flush=True)
             
             # Handle password confirmation (PyPI may ask for password again after 2FA)
             if 'password' in r.url.lower() and 'confirm' in r.url.lower():
@@ -79,28 +94,52 @@ if 'two-factor' in r.url:
                     loc = r.headers['location']
                     r = s.get(loc if loc.startswith('http') else 'https://pypi.org' + loc, 
                         headers=bh(referer=r.url), timeout=30)
-                    print(f"After password: {r.status_code}, URL: {r.url}", flush=True)
-            break
-        else:
-            print(f"TOTP failed: {r.status_code}, body: {r.text[:800]}", flush=True)
-            if attempt < totp_retries - 1:
-                time.sleep(1)
-    else:
-        print("TOTP failed after all retries", flush=True)
-        sys.exit(1)
+                    print(f"After password: {r.status_code}, URL: {r.url[:80]}", flush=True)
+            return True, r
+        
+        # Handle 429: wait and re-login
+        if r.status_code == 429:
+            print("Rate limited on TOTP! Waiting 90 seconds, then re-login...", flush=True)
+            time.sleep(90)
+            totp_page_resp = do_login(s)
+            if not totp_page_resp:
+                return False, None
+            continue  # Retry with fresh session
+        
+        # Other failures: try re-login and retry once
+        if attempt < 2:
+            print("TOTP failed, re-login and retry...", flush=True)
+            time.sleep(2)
+            totp_page_resp = do_login(s)
+            if not totp_page_resp:
+                return False, None
+    
+    print("TOTP failed after all retries", flush=True)
+    return False, None
 
-# 2. Now go to token page (session should be fully authenticated)
+# === Main ===
+s = requests.Session()
+
+# 1. Login + TOTP
+totp_page = do_login(s)
+if not totp_page:
+    sys.exit(1)
+
+success, resp = do_totp(s, totp_page)
+if not success:
+    sys.exit(1)
+
+# 2. Go to token page
 print("\n=== Token page ===", flush=True)
 r = s.get('https://pypi.org/manage/account/token/', timeout=30, headers=bh(referer='https://pypi.org/'))
-print(f"GET token: {r.status_code}, URL: {r.url}", flush=True)
+print(f"GET token: {r.status_code}, URL: {r.url[:80]}", flush=True)
 
-# If redirected back to login, something went wrong with TOTP
 if 'login' in r.url.lower():
-    print(f"ERROR: Redirected to login after TOTP. Session not authenticated.", flush=True)
+    print(f"ERROR: Redirected to login. Session not authenticated.", flush=True)
     print(f"HTML: {r.text[:1000]}", flush=True)
     sys.exit(1)
 
-# 4. Create token
+# 3. Create token
 print(f"\n=== Create token '{TOKEN_NAME}' ===", flush=True)
 csrf = extract_csrf(r.text)
 inputs = re.findall(r'<input[^>]*name="([^"]*)"', r.text, re.IGNORECASE)
@@ -124,7 +163,6 @@ if csrf and 'name' in inputs:
         print(f"{'='*60}", flush=True)
         with open('/tmp/pypi_token.txt', 'w') as f:
             f.write(tok.group(0))
-        # Also set step output
         if 'GITHUB_OUTPUT' in os.environ:
             with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
                 f.write(f"token={tok.group(0)}\n")
@@ -132,9 +170,8 @@ if csrf and 'name' in inputs:
         loc = r.headers['location']
         loc_url = loc if loc.startswith('http') else 'https://pypi.org' + loc
         r2 = s.get(loc_url, headers=bh(referer='https://pypi.org/manage/account/token/'), timeout=30)
-        print(f"Redirect: {r2.url}", flush=True)
+        print(f"Redirect to: {r2.url[:80]}", flush=True)
         
-        # Look for token in alert boxes
         alerts = re.findall(r'class="[^"]*alert-success[^"]*"[^>]*>([^<]+)', r2.text)
         print(f"Alerts: {alerts}", flush=True)
         
@@ -146,11 +183,17 @@ if csrf and 'name' in inputs:
                     f.write(m.group(0))
                 break
 else:
-    print(f"Cannot create. HTML ({len(r.text)}): {r.text[:1000]}", flush=True)
+    print(f"Cannot create. Page ({len(r.text)} chars): {r.text[:1000]}", flush=True)
+
+# 4. Verify
+print(f"\n=== Verify ===", flush=True)
+r = s.get('https://pypi.org/manage/account/token/', timeout=30, headers=bh())
+print(f"Verify: {r.status_code}, URL: {r.url[:80]}", flush=True)
+if TOKEN_NAME in r.text:
+    print(f"✅ Token '{TOKEN_NAME}' verified on page!", flush=True)
+elif os.path.exists('/tmp/pypi_token.txt'):
+    print("Token file exists.", flush=True)
+else:
+    print("Token not found.", flush=True)
 
 print(f"\n=== Done ===", flush=True)
-r = s.get('https://pypi.org/manage/account/token/', timeout=30, headers=bh())
-if TOKEN_NAME in r.text:
-    print(f"✅ Token '{TOKEN_NAME}' verified!", flush=True)
-elif 'pypi_token.txt' in os.popen('ls -la /tmp/pypi_token.txt 2>/dev/null').read():
-    print("Token file exists but couldn't verify page content", flush=True)
