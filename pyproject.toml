@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=64.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "china-indices-watcher"
+version = "0.1.0"
+description = "A CLI tool for watching A-share market indices (A股市场指数观测工具)"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "longongzi", email = "longongzi@users.noreply.github.com"}
+]
+requires-python = ">=3.9"
+dependencies = [
+    "click>=8.0.0",
+    "rich>=12.0.0",
+    "requests>=2.28.0",
+]
+keywords = ["china", "stock", "a-share", "market", "indices", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+
+[project.urls]
+Homepage = "https://github.com/longongzi/china-indices-watcher"
+Repository = "https://github.com/longongzi/china-indices-watcher"
+BugTracker = "https://github.com/longongzi/china-indices-watcher/issues"
+
+[project.scripts]
+cniw = "cniw.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["cniw*"]
