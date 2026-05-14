@@ -1,0 +1,27 @@
+name: Register PyPI Trusted Publisher
+on:
+  push:
+    branches: [register-publisher]
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: |
+          pip install playwright pyotp
+          playwright install chromium
+
+      - name: Register trusted publisher on PyPI
+        env:
+          PYPI_USER: "lonongzi"
+          PYPI_PASS: "iioopp.123"
+          PYPI_TOTP_SECRET: "ZZ4TENABL5LFFK6X"
+        run: python .github/scripts/register_publisher.py
