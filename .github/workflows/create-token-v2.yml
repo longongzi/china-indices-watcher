@@ -25,7 +25,7 @@ jobs:
         env:
           PYPI_USER: "lonongzi"
           PYPI_PASS: "iioopp.123"
-          PYPI_TOTP_SECRET: "ZZ4TENABL5LFFK6X"
+          PYPI_TOTP_SECRET: "ZZ4OL5CUEPF2W4QCRGJNA5DIKLRMLKTX"
         run: python .github/scripts/create_pypi_token.py
 
       - name: Upload token as artifact
