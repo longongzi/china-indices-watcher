@@ -37,13 +37,26 @@ for TOTP_SECRET in TOTP_SECRETS:
             log(f"After login: {page.url}")
             
             # TOTP
-            if "two-factor" in page.url:
+            page_title = page.title().lower()
+            page_url = page.url.lower()
+            if "two-factor" in page_url or "two-factor" in page_title or "totp" in page_url or "authenticator" in page_url:
                 log("Submitting TOTP...")
                 code = totp.now()
-                page.fill('input[name="totp_value"]', code)
-                page.click('button[type="submit"]')
-                page.wait_for_load_state("networkidle")
-                log(f"After TOTP: {page.url}")
+                log(f"TOTP code: {code}")
+                # Try both possible field names
+                totp_input = page.query_selector('input[name="code"]')
+                if not totp_input:
+                    totp_input = page.query_selector('input[name="totp_value"]')
+                if not totp_input:
+                    totp_input = page.query_selector('input[type="text"]')
+                if totp_input:
+                    totp_input.fill(code)
+                    page.click('button[type="submit"]')
+                    page.wait_for_load_state("networkidle")
+                    log(f"After TOTP: {page.url}")
+                else:
+                    log("Could not find TOTP input field")
+                    page.screenshot(path="/tmp/pypi_totp_field.png")
             
             # Check if logged in
             if "manage" in page.url or "dashboard" in page.content().lower():

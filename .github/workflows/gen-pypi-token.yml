@@ -1,4 +1,4 @@
-name: Create PyPI Token
+name: Create PyPI Token (Playwright)
 on:
   workflow_dispatch:
 
@@ -18,17 +18,10 @@ jobs:
           pip install playwright pyotp
           playwright install chromium
 
-      - name: Create PyPI API Token via Playwright
+      - name: Create API token on PyPI
         env:
           PYPI_USER: "lonongzi"
           PYPI_PASS: "iioopp.123"
-          PYPI_TOTP_SECRET: "ZZ4OL5CUEPF2W4QCRGJNA5DIKLRMLKTX"
-          TOKEN_NAME: "cniw-github-actions"
+          PYPI_TOTP_SECRET: "ZZ4TENABL5LFFK6X"
+          PYPI_TOTP_SECRET2: "ZZ4OL5CUEPF2W4QCRGJNA5DIKLRMLKTX"
         run: python .github/scripts/create_pypi_token.py
-
-      - name: Upload token as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: pypi-token
-          path: /tmp/pypi_token.txt
-          if-no-files-found: warn
